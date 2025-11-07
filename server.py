@@ -48,6 +48,16 @@ def _base_ydl_opts() -> Dict[str, Any]:
         "cachedir": False,
         "noplaylist": True,
         "ignoreerrors": False,
+        # Force English UI responses so titles/descriptions aren't localized.
+        "http_headers": {
+            "Accept-Language": "en-US,en;q=0.9",
+        },
+        "extractor_args": {
+            "youtube": {
+                "lang": ["en"],
+                "player_client": ["web"],
+            }
+        },
     }
 
 
