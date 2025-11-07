@@ -1,6 +1,6 @@
 import re
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 from flask import Flask, jsonify, render_template, request, send_file
 from yt_dlp import YoutubeDL
@@ -21,7 +21,7 @@ class DownloaderError(Exception):
     """Raised when a download- or metadata-related issue occurs."""
 
 
-def _validate_url(url: str | None) -> str:
+def _validate_url(url: Optional[str]) -> str:
     if not url or not url.strip():
         raise DownloaderError("Please provide a URL.")
     url = url.strip()
