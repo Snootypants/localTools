@@ -5,6 +5,7 @@ from urllib.parse import parse_qs, urlencode, urlparse, urlunparse
 
 from flask import Flask, jsonify, render_template, request, send_file
 from yt_dlp import YoutubeDL
+from yt_dlp.utils import DownloadError
 
 """
 LocalTools YouTube Downloader
@@ -104,6 +105,20 @@ def _format_response(info: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
+def _extract_metadata(url: str) -> Dict[str, Any]:
+    """Query yt-dlp for metadata with a fallback format if needed."""
+    base_opts = {**_base_ydl_opts(), "skip_download": True}
+    try:
+        with YoutubeDL(base_opts) as ydl:
+            return ydl.extract_info(url, download=False)
+    except DownloadError as err:
+        if "Requested format is not available" not in str(err):
+            raise
+        fallback_opts = {**base_opts, "format": "best"}
+        with YoutubeDL(fallback_opts) as ydl:
+            return ydl.extract_info(url, download=False)
+
+
 def _resolve_download_dir(custom_dir: Optional[str]) -> Path:
     """Return a writable directory, defaulting to the project downloads folder."""
     if not custom_dir or not str(custom_dir).strip():
@@ -137,9 +152,7 @@ def get_info():
     payload = request.get_json(silent=True) or {}
     try:
         url = _ensure_english_locale(_validate_url(payload.get("url")))
-        ydl_opts = {**_base_ydl_opts(), "skip_download": True}
-        with YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info(url, download=False)
+        info = _extract_metadata(url)
     except DownloaderError as exc:
         return jsonify({"error": str(exc)}), 400
     except Exception as exc:  # pragma: no cover - network/lib errors
