@@ -1,5 +1,11 @@
+**pycache**/
+*.py[cod]
+.pytest_cache/
+.env
+.env.local
+.venv/
 venv/
-__pycache__/
-*.pyc
+.idea/
+.vscode/
 downloads/
 .DS_Store

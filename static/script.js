@@ -6,6 +6,7 @@ const els = {
   downloadBtn: document.getElementById('downloadBtn'),
   downloadBtnIcon: document.querySelector('#downloadBtn .icon'),
   downloadBtnLabel: document.querySelector('#downloadBtn .label'),
+  downloadName: document.getElementById('preferredName'),
   formatSelect: document.getElementById('formatSelect'),
   resolutionSelect: document.getElementById('resolutionSelect'),
   downloadType: document.getElementById('downloadType'),
@@ -33,9 +34,11 @@ const state = {
   formatSizes: new Map(),
   defaultSaveDir: appConfig.defaultSaveDir || '',
   baseDir: appConfig.baseDir || '',
-  saveDir: appConfig.defaultSaveDir || ''
+  saveDir: appConfig.defaultSaveDir || '',
+  fetchInFlight: false
 };
 
+let metadataController = null;
 let downloadController = null;
 let downloadReady = false;
 let downloadState = 'idle';
@@ -63,44 +66,100 @@ const setStatus = (message, type = 'info') => {
   }
 };
 
+const resetPreview = () => {
+  state.formats = [];
+  state.groupedFormats = new Map();
+  state.formatSizes = new Map();
+  els.infoPanel.hidden = true;
+  if (els.thumbnail) {
+    els.thumbnail.src = '';
+    els.thumbnail.setAttribute('hidden', 'hidden');
+  }
+  if (els.title) els.title.textContent = '—';
+  if (els.uploader) els.uploader.textContent = '';
+  if (els.duration) els.duration.textContent = '';
+  if (els.description) els.description.textContent = '';
+  els.resolutionSelect.innerHTML = '';
+  els.formatSelect.innerHTML = '';
+  els.resolutionSelect.disabled = true;
+  els.formatSelect.disabled = true;
+  els.formatCount.textContent = '0';
+  setDownloadReady(false);
+  hideProgress();
+};
+
+const setFetchInFlight = (inFlight) => {
+  state.fetchInFlight = inFlight;
+  if (els.fetchBtn) {
+    els.fetchBtn.classList.toggle('is-loading', inFlight);
+  }
+  updateFetchButtonState();
+};
+
+const updateFetchButtonState = () => {
+  if (!els.fetchBtn || !els.url) return;
+  const hasUrl = Boolean(els.url.value.trim());
+  els.fetchBtn.disabled = state.fetchInFlight || !hasUrl;
+};
+
 const showProgress = () => {
-  els.progressWrapper.hidden = false;
+  if (els.progressWrapper) {
+    els.progressWrapper.hidden = false;
+  }
 };
 
 const hideProgress = () => {
-  els.progressWrapper.hidden = true;
+  if (els.progressWrapper) {
+    els.progressWrapper.hidden = true;
+  }
   setProgressIndeterminate(false);
   setProgressValue(0);
 };
 
 const setProgressIndeterminate = (active) => {
+  if (!els.progressTrack) return;
   els.progressTrack.classList.toggle('indeterminate', active);
-  if (active) {
+  if (active && els.progressLabel) {
     els.progressLabel.textContent = '…';
   }
 };
 
 const setProgressValue = (fraction) => {
+  if (!els.progressBar || !els.progressLabel) return;
   const safe = Math.max(0, Math.min(1, Number.isFinite(fraction) ? fraction : 0));
   const percent = Math.round(safe * 100);
   els.progressBar.style.width = `${percent}%`;
   els.progressLabel.textContent = `${percent}%`;
 };
 
-const setDownloadState = (state) => {
-  downloadState = state;
+const formatFileSize = (sizeInfo) => {
+  if (!sizeInfo || !Number.isFinite(Number(sizeInfo.bytes))) return '';
+  let bytes = Number(sizeInfo.bytes);
+  const units = ['B', 'KB', 'MB', 'GB'];
+  let unitIndex = 0;
+  while (bytes >= 1024 && unitIndex < units.length - 1) {
+    bytes /= 1024;
+    unitIndex += 1;
+  }
+  const prefix = sizeInfo.approximate ? '≈ ' : '';
+  const value = bytes >= 10 || unitIndex === 0 ? bytes.toFixed(0) : bytes.toFixed(1);
+  return `${prefix}${value} ${units[unitIndex]}`;
+};
+
+const setDownloadState = (stateValue) => {
+  downloadState = stateValue;
   const label = els.downloadBtnLabel;
   const icon = els.downloadBtnIcon;
-  if (!label || !icon) return;
+  if (!label || !icon || !els.downloadBtn) return;
 
-  els.downloadBtn.classList.toggle('is-stop', state === 'running');
-  els.downloadBtn.classList.toggle('is-finished', state === 'finished');
+  els.downloadBtn.classList.toggle('is-stop', stateValue === 'running');
+  els.downloadBtn.classList.toggle('is-finished', stateValue === 'finished');
 
-  if (state === 'running') {
+  if (stateValue === 'running') {
     label.textContent = 'Stop';
     icon.textContent = '✕';
     els.downloadBtn.disabled = false;
-  } else if (state === 'finished') {
+  } else if (stateValue === 'finished') {
     label.textContent = 'Finished';
     icon.textContent = '✓';
     els.downloadBtn.disabled = true;
@@ -114,7 +173,7 @@ const setDownloadState = (state) => {
 
 const setDownloadReady = (ready) => {
   downloadReady = ready;
-  if (downloadState === 'idle') {
+  if (downloadState === 'idle' && els.downloadBtn) {
     els.downloadBtn.disabled = !downloadReady;
   }
 };
@@ -154,12 +213,17 @@ const groupFormatsByResolution = (formats) => {
     const key = Number.isFinite(fmt.height) ? Number(fmt.height) : 'audio';
     if (!grouped.has(key)) grouped.set(key, []);
     grouped.get(key).push(fmt);
+
     if (fmt.format_id) {
-      const rawSize = fmt.filesize ?? fmt.filesize_approx ?? null;
-      state.formatSizes.set(
-        fmt.format_id,
-        rawSize ? Number(rawSize) : null
-      );
+      let sizeRecord = null;
+      if (Number.isFinite(Number(fmt.filesize))) {
+        sizeRecord = { bytes: Number(fmt.filesize), approximate: false };
+      } else if (Number.isFinite(Number(fmt.filesize_approx))) {
+        sizeRecord = { bytes: Number(fmt.filesize_approx), approximate: true };
+      }
+      if (sizeRecord) {
+        state.formatSizes.set(fmt.format_id, sizeRecord);
+      }
     }
   });
   return grouped;
@@ -180,12 +244,17 @@ const populateFormatOptions = (resolutionValue) => {
   }
 
   targetFormats.forEach((fmt) => {
-    const detailParts = [fmt.ext, fmt.format_note, fmt.fps ? `${fmt.fps}fps` : null]
-      .filter(Boolean)
-      .join(' • ');
+    const detailParts = [];
+    if (fmt.ext) detailParts.push(fmt.ext.toUpperCase());
+    if (fmt.format_note) detailParts.push(fmt.format_note);
+    if (fmt.fps) detailParts.push(`${fmt.fps}fps`);
+    const sizeInfo = state.formatSizes.get(fmt.format_id);
+    const sizeLabel = formatFileSize(sizeInfo);
+    if (sizeLabel) detailParts.push(sizeLabel);
+
     const option = document.createElement('option');
     option.value = fmt.format_id;
-    option.textContent = detailParts || fmt.format_id;
+    option.textContent = detailParts.join(' • ') || fmt.format_id;
     els.formatSelect.appendChild(option);
   });
   els.formatSelect.disabled = false;
@@ -244,22 +313,32 @@ const getSelectedFormatId = () => {
 const getExpectedSize = () => {
   const formatId = getSelectedFormatId();
   if (!formatId) return null;
-  const size = state.formatSizes.get(formatId);
-  return Number.isFinite(Number(size)) ? Number(size) : null;
+  const sizeInfo = state.formatSizes.get(formatId);
+  if (!sizeInfo) return null;
+  return Number.isFinite(Number(sizeInfo.bytes)) ? Number(sizeInfo.bytes) : null;
 };
 
 const fetchInfo = async () => {
-  setStatus('Fetching metadata… hang tight.');
-  els.fetchBtn.disabled = true;
-  setDownloadReady(false);
+  if (!els.url) return;
+  const urlValue = els.url.value.trim();
+  if (!urlValue) {
+    setStatus('Please enter a URL first.', 'error');
+    return;
+  }
+
+  resetPreview();
+  metadataController?.abort();
+  metadataController = new AbortController();
+  setFetchInFlight(true);
   setDownloadState('idle');
-  hideProgress();
+  setStatus('Fetching metadata… hang tight.');
 
   try {
     const res = await fetch('/info', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ url: els.url.value })
+      body: JSON.stringify({ url: urlValue }),
+      signal: metadataController.signal
     });
 
     const data = await res.json();
@@ -285,17 +364,20 @@ const fetchInfo = async () => {
     populateResolutionOptions();
     syncQualityControls();
     setDownloadReady(true);
-    setDownloadState('idle');
     setStatus(
       `Metadata ready. Files will save to ${resolveSaveDirText(state.saveDir)}.`,
       'success'
     );
   } catch (err) {
-    setDownloadReady(false);
-    setDownloadState('idle');
-    setStatus(err.message, 'error');
+    if (err.name === 'AbortError') {
+      setStatus('Request cancelled.', 'info');
+    } else {
+      setStatus(err.message, 'error');
+      resetPreview();
+    }
   } finally {
-    els.fetchBtn.disabled = false;
+    setFetchInFlight(false);
+    metadataController = null;
   }
 };
 
@@ -306,22 +388,32 @@ const parseFilename = (contentDisposition) => {
 };
 
 const downloadVideo = async () => {
+  if (!els.url) return;
+  const urlValue = els.url.value.trim();
+  if (!urlValue) {
+    setStatus('Please enter a URL first.', 'error');
+    return;
+  }
+  if (!downloadReady) {
+    setStatus('Fetch video info before downloading.', 'error');
+    return;
+  }
+
   downloadController = new AbortController();
   setDownloadState('running');
   showProgress();
-  setProgressIndeterminate(true);
+  const expectedSize = getExpectedSize();
+  setProgressIndeterminate(!expectedSize);
   setProgressValue(0);
   setStatus('Downloading… this may take a moment.');
 
-  const expectedSize = getExpectedSize();
-
   try {
     const payload = {
-      url: els.url.value,
+      url: urlValue,
       format_id: getSelectedFormatId(),
       download_type: els.downloadType.value,
       save_dir: state.saveDir,
-      expected_size: expectedSize
+      preferred_name: els.downloadName?.value || undefined
     };
 
     const res = await fetch('/download', {
@@ -414,23 +506,35 @@ const downloadVideo = async () => {
   }
 };
 
-els.fetchBtn.addEventListener('click', fetchInfo);
-els.downloadBtn.addEventListener('click', () => {
-  if (downloadState === 'running') {
-    downloadController?.abort();
-  } else if (downloadReady) {
-    downloadVideo();
-  }
-});
-els.url.addEventListener('keyup', (event) => {
-  if (event.key === 'Enter') fetchInfo();
-});
-els.resolutionSelect.addEventListener('change', (event) => {
-  populateFormatOptions(event.target.value);
-});
-els.downloadType.addEventListener('change', () => {
-  syncQualityControls();
-});
+if (els.fetchBtn) {
+  els.fetchBtn.addEventListener('click', fetchInfo);
+}
+if (els.downloadBtn) {
+  els.downloadBtn.addEventListener('click', () => {
+    if (downloadState === 'running') {
+      downloadController?.abort();
+    } else if (downloadReady) {
+      downloadVideo();
+    }
+  });
+}
+if (els.url) {
+  els.url.addEventListener('keyup', (event) => {
+    if (event.key === 'Enter') fetchInfo();
+  });
+  els.url.addEventListener('input', updateFetchButtonState);
+  updateFetchButtonState();
+}
+if (els.resolutionSelect) {
+  els.resolutionSelect.addEventListener('change', (event) => {
+    populateFormatOptions(event.target.value);
+  });
+}
+if (els.downloadType) {
+  els.downloadType.addEventListener('change', () => {
+    syncQualityControls();
+  });
+}
 
 if (els.saveDirInput) {
   els.saveDirInput.addEventListener('input', (event) => {

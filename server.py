@@ -14,7 +14,17 @@ Flask application that powers the local-only YouTube downloader tool.
 """
 BASE_DIR = Path(__file__).resolve().parent
 DOWNLOAD_DIR = BASE_DIR / "downloads"
-DOWNLOAD_DIR.mkdir(exist_ok=True)
+DOWNLOAD_DIR.mkdir(parents=True, exist_ok=True)
+
+ALLOWED_YOUTUBE_HOSTS = {
+    "youtu.be",
+    "youtube.com",
+    "www.youtube.com",
+    "music.youtube.com",
+    "youtube-nocookie.com",
+    "www.youtube-nocookie.com",
+}
+YOUTUBE_HOST_SUFFIXES = (".youtube.com", ".youtube-nocookie.com")
 
 app = Flask(__name__, static_folder="static", template_folder="templates")
 
@@ -24,14 +34,24 @@ class DownloaderError(Exception):
 
 
 def _validate_url(url: Optional[str]) -> str:
+    """Ensure the provided URL is a supported YouTube endpoint."""
     if not url or not url.strip():
         raise DownloaderError("Please provide a URL.")
-    url = url.strip()
-    if not url.startswith(("http://", "https://")):
+
+    cleaned = url.strip()
+    if not cleaned.startswith(("http://", "https://")):
         raise DownloaderError("URL must start with http:// or https://")
-    if "youtube" not in url and "youtu.be" not in url:
+
+    parsed = urlparse(cleaned)
+    hostname = (parsed.hostname or "").lower()
+    if not hostname:
         raise DownloaderError("Only YouTube URLs are supported in this version.")
-    return url
+
+    if hostname not in ALLOWED_YOUTUBE_HOSTS and not hostname.endswith(YOUTUBE_HOST_SUFFIXES):
+        raise DownloaderError("Only YouTube URLs are supported in this version.")
+
+    sanitized = urlunparse(parsed._replace(fragment=""))
+    return sanitized
 
 
 def _ensure_english_locale(url: str) -> str:
@@ -46,8 +66,10 @@ def _ensure_english_locale(url: str) -> str:
 
 def _sanitize_filename(name: str) -> str:
     """Keep filenames filesystem-safe while remaining human friendly."""
-    sanitized = re.sub(r"[^A-Za-z0-9._-]", "_", name)
-    sanitized = re.sub(r"_+", "_", sanitized).strip("._")
+    sanitized = re.sub(r"[^A-Za-z0-9._-]", "_", name or "")
+    sanitized = re.sub(r"_+", "_", sanitized)
+    sanitized = re.sub(r"_+(?=\.)", "", sanitized)
+    sanitized = sanitized.strip("._")
     return sanitized or "download"
 
 
@@ -75,8 +97,9 @@ def _base_ydl_opts() -> Dict[str, Any]:
 
 def _format_response(info: Dict[str, Any]) -> Dict[str, Any]:
     """Extract only the fields the UI needs to render a preview."""
+
     def _summarize_format(fmt: Dict[str, Any]) -> Dict[str, Any]:
-        return {
+        summary = {
             "format_id": fmt.get("format_id"),
             "ext": fmt.get("ext"),
             "height": fmt.get("height"),
@@ -84,15 +107,25 @@ def _format_response(info: Dict[str, Any]) -> Dict[str, Any]:
             "filesize_approx": fmt.get("filesize_approx"),
             "format_note": fmt.get("format_note"),
             "fps": fmt.get("fps"),
+            "acodec": fmt.get("acodec"),
+            "vcodec": fmt.get("vcodec"),
         }
+        return summary
 
-    formats: List[Dict[str, Any]] = []
+    filtered_formats: List[Dict[str, Any]] = []
     for fmt in info.get("formats", []):
-        if fmt.get("acodec") == "none" and fmt.get("vcodec") == "none":
+        ext = (fmt.get("ext") or "").lower()
+        if ext == "flv":
             continue
-        if fmt.get("ext") not in {"mp4", "webm", "m4a", "mp3"}:
+
+        vcodec = (fmt.get("vcodec") or "").lower()
+        acodec = (fmt.get("acodec") or "").lower()
+        has_video = vcodec and vcodec != "none"
+        has_audio_only = (not has_video) and acodec and acodec != "none"
+        if not has_video and not has_audio_only:
             continue
-        formats.append(_summarize_format(fmt))
+
+        filtered_formats.append(_summarize_format(fmt))
 
     return {
         "title": info.get("title"),
@@ -100,7 +133,7 @@ def _format_response(info: Dict[str, Any]) -> Dict[str, Any]:
         "duration": info.get("duration"),
         "thumbnail": info.get("thumbnail"),
         "description": info.get("description"),
-        "formats": formats,
+        "formats": filtered_formats,
         "default_download_dir": str(DOWNLOAD_DIR),
     }
 
@@ -121,17 +154,22 @@ def _extract_metadata(url: str) -> Dict[str, Any]:
 
 def _resolve_download_dir(custom_dir: Optional[str]) -> Path:
     """Return a writable directory, defaulting to the project downloads folder."""
-    if not custom_dir or not str(custom_dir).strip():
-        target = DOWNLOAD_DIR
+    raw_value = (custom_dir or "").strip()
+    if not raw_value:
+        resolved = DOWNLOAD_DIR
     else:
-        candidate = Path(custom_dir).expanduser()
-        if not candidate.is_absolute():
-            candidate = (BASE_DIR / candidate).resolve()
-        else:
-            candidate = candidate.resolve()
-        candidate.mkdir(parents=True, exist_ok=True)
-        target = candidate
-    return target
+        candidate = Path(raw_value).expanduser()
+        resolved = candidate.resolve() if candidate.is_absolute() else (BASE_DIR / candidate).resolve()
+
+    if resolved.exists() and not resolved.is_dir():
+        raise DownloaderError("Download path must be a directory.")
+
+    try:
+        resolved.mkdir(parents=True, exist_ok=True)
+    except OSError as exc:
+        raise DownloaderError(f"Unable to use save location: {exc}") from exc
+
+    return resolved
 
 
 @app.route("/")
@@ -166,19 +204,27 @@ def download_video():
     payload = request.get_json(silent=True) or {}
     try:
         url = _ensure_english_locale(_validate_url(payload.get("url")))
-        format_id = payload.get("format_id")
         download_type = (payload.get("download_type") or "video").lower()
-        ydl_opts = _base_ydl_opts()
+        if download_type not in {"audio", "video"}:
+            download_type = "video"
+        format_id = payload.get("format_id")
         download_dir = _resolve_download_dir(payload.get("save_dir"))
 
         preferred_name = payload.get("preferred_name")
-        filename_template = _sanitize_filename(preferred_name) if preferred_name else "%(title)s"
+        if preferred_name:
+            filename_base = _sanitize_filename(preferred_name)
+        else:
+            metadata = _extract_metadata(url)
+            filename_base = _sanitize_filename(metadata.get("title") or "download")
+
+        if "." in filename_base:
+            filename_base = filename_base.rsplit(".", 1)[0] or filename_base
+        ydl_opts = _base_ydl_opts()
         ydl_opts["paths"] = {"home": str(download_dir)}
-        ydl_opts["outtmpl"] = f"{filename_template}.%(ext)s"
-        ydl_opts["outtmpl_na_placeholder"] = "unknown"
+        ydl_opts["outtmpl"] = f"{filename_base}.%(ext)s"
+        ydl_opts["outtmpl_na_placeholder"] = "download"
 
         if download_type == "audio":
-            # Force best available audio and convert it to MP3 via ffmpeg.
             ydl_opts["format"] = "bestaudio/best"
             ydl_opts["postprocessors"] = [
                 {
@@ -188,11 +234,9 @@ def download_video():
                 }
             ]
         elif format_id:
-            # Honor the explicit format coming from the dropdown list.
             ydl_opts["format"] = format_id
         else:
-            # Fallback to best video + audio combination when nothing is selected.
-            ydl_opts["format"] = "bv*+ba/best"
+            ydl_opts["format"] = "bv*+ba/bestvideo+bestaudio/best"
 
         with YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(url, download=True)
@@ -208,9 +252,12 @@ def download_video():
     if not file_path.exists():
         return jsonify({"error": "Downloaded file not found."}), 500
 
-    response = send_file(file_path, as_attachment=True, download_name=file_path.name)
+    safe_stem = _sanitize_filename(file_path.stem)
+    download_name = f"{safe_stem}{file_path.suffix}" if file_path.suffix else safe_stem
+
+    response = send_file(file_path, as_attachment=True, download_name=download_name)
     response.headers["X-Download-Path"] = str(file_path)
-    response.headers["X-Download-Dir"] = str(file_path.parent)
+    response.headers["X-Download-Dir"] = str(download_dir)
     return response
 
 
