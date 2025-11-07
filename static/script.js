@@ -10,7 +10,9 @@ const els = {
   title: document.getElementById('title'),
   uploader: document.getElementById('uploader'),
   duration: document.getElementById('duration'),
-  thumbnail: document.getElementById('thumbnail')
+  thumbnail: document.getElementById('thumbnail'),
+  formatCount: document.getElementById('formatCount'),
+  selectedType: document.getElementById('selectedType')
 };
 
 // Convert seconds to hh:mm:ss (dropping leading hours when unnecessary).
@@ -25,9 +27,15 @@ const formatDuration = (seconds) => {
     .replace(/^00:/, '');
 };
 
-const setStatus = (message, isError = false) => {
+const setStatus = (message, type = 'info') => {
   els.status.textContent = message;
-  els.status.style.color = isError ? '#ff8787' : 'var(--muted)';
+  if (type === 'error') {
+    els.status.style.color = 'var(--error)';
+  } else if (type === 'success') {
+    els.status.style.color = 'var(--success)';
+  } else {
+    els.status.style.color = 'var(--muted)';
+  }
 };
 
 // Fill the dropdown with server supplied formats; disable it when empty.
@@ -38,6 +46,7 @@ const populateFormats = (formats) => {
     opt.textContent = 'No compatible formats available';
     els.formatSelect.appendChild(opt);
     els.formatSelect.disabled = true;
+    els.formatCount.textContent = '0';
     return;
   }
 
@@ -51,10 +60,11 @@ const populateFormats = (formats) => {
     els.formatSelect.appendChild(option);
   });
   els.formatSelect.disabled = false;
+  els.formatCount.textContent = formats.length;
 };
 
 const fetchInfo = async () => {
-  setStatus('Fetching metadata…');
+  setStatus('Fetching metadata… hang tight.');
   els.fetchBtn.disabled = true;
   els.downloadBtn.disabled = true;
 
@@ -69,8 +79,9 @@ const fetchInfo = async () => {
     if (!res.ok) throw new Error(data.error || 'Failed to fetch info');
 
     els.title.textContent = data.title || 'Untitled';
-    els.uploader.textContent = data.uploader ? `by ${data.uploader}` : '';
-    els.duration.textContent = data.duration ? formatDuration(data.duration) : '';
+    els.uploader.textContent = data.uploader ? data.uploader : 'Unknown uploader';
+    const formattedDuration = data.duration ? formatDuration(data.duration) : '00:00';
+    els.duration.textContent = formattedDuration;
     if (data.thumbnail) {
       els.thumbnail.src = data.thumbnail;
       els.thumbnail.removeAttribute('hidden');
@@ -79,9 +90,9 @@ const fetchInfo = async () => {
 
     populateFormats(data.formats || []);
     els.downloadBtn.disabled = false;
-    setStatus('Metadata ready. Choose a format to download.');
+    setStatus('Metadata ready. Choose a format and hit download.', 'success');
   } catch (err) {
-    setStatus(err.message, true);
+    setStatus(err.message, 'error');
   } finally {
     els.fetchBtn.disabled = false;
   }
@@ -127,9 +138,9 @@ const downloadVideo = async () => {
     anchor.remove();
     URL.revokeObjectURL(url);
 
-    setStatus('Download complete.');
+    setStatus('Download complete.', 'success');
   } catch (err) {
-    setStatus(err.message, true);
+    setStatus(err.message, 'error');
   } finally {
     els.downloadBtn.disabled = false;
   }
@@ -139,4 +150,7 @@ els.fetchBtn.addEventListener('click', fetchInfo);
 els.downloadBtn.addEventListener('click', downloadVideo);
 els.url.addEventListener('keyup', (event) => {
   if (event.key === 'Enter') fetchInfo();
+});
+els.downloadType.addEventListener('change', () => {
+  els.selectedType.textContent = els.downloadType.value === 'audio' ? 'Audio' : 'Video';
 });

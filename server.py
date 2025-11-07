@@ -81,7 +81,11 @@ def _format_response(info: Dict[str, Any]) -> Dict[str, Any]:
 
 
 @app.route("/")
+@app.route("/index")
+@app.route("/index.html")
+@app.route("/templates/index.html")
 def index() -> str:
+    """Serve the primary UI regardless of legacy template paths."""
     return render_template("index.html")
 
 

@@ -8,43 +8,72 @@
     <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}" />
   </head>
   <body>
-    <main class="container">
-      <section class="hero">
-        <h1>YouTube Downloader</h1>
-        <p>All processing stays on your machine. Paste a link to get started.</p>
-      </section>
+    <div class="app-shell">
+      <div class="glow glow-one" aria-hidden="true"></div>
+      <div class="glow glow-two" aria-hidden="true"></div>
+      <main class="layout">
+        <header class="masthead">
+          <p class="badge">Local • Private Beta</p>
+          <h1>Local YouTube Downloader</h1>
+          <p class="lede">
+            Paste any public YouTube link, inspect the metadata, and pull down audio or video without touching the cloud.
+          </p>
+        </header>
 
-      <section class="card">
-        <label for="videoUrl">YouTube URL</label>
-        <div class="input-row">
-          <input id="videoUrl" name="videoUrl" type="url" placeholder="https://www.youtube.com/watch?v=..." />
-          <button type="button" id="fetchBtn">Fetch Info</button>
-        </div>
+        <section class="grid">
+          <article class="panel form-panel">
+            <div class="field-group">
+              <label for="videoUrl">YouTube URL</label>
+              <div class="field-row">
+                <input id="videoUrl" name="videoUrl" type="url" placeholder="https://www.youtube.com/watch?v=dQw4w9WgXcQ" />
+                <button type="button" id="fetchBtn" class="primary">Fetch Info</button>
+              </div>
+            </div>
 
-        <div class="info-grid" id="infoPanel" hidden>
-          <img id="thumbnail" alt="Video thumbnail" />
-          <div class="meta">
-            <h2 id="title">–</h2>
-            <p id="uploader"></p>
-            <p id="duration"></p>
-          </div>
-        </div>
+            <div class="field-pair">
+              <label for="formatSelect">Format</label>
+              <label for="downloadType">Download Type</label>
+              <select id="formatSelect" disabled>
+                <option value="" selected hidden>Fetch info to list formats</option>
+              </select>
+              <select id="downloadType">
+                <option value="video" selected>Video</option>
+                <option value="audio">Audio (MP3)</option>
+              </select>
+            </div>
 
-        <label for="formatSelect">Format</label>
-        <select id="formatSelect" disabled>
-          <option value="" selected hidden>Fetch info to list formats</option>
-        </select>
+            <div class="actions">
+              <button type="button" id="downloadBtn" class="secondary" disabled>
+                <span class="icon" aria-hidden="true">⬇︎</span>
+                Download
+              </button>
+              <p class="status" id="status">Paste a link to get started.</p>
+            </div>
+          </article>
 
-        <label for="downloadType">Download Type</label>
-        <select id="downloadType">
-          <option value="video" selected>Video</option>
-          <option value="audio">Audio (MP3)</option>
-        </select>
-
-        <button type="button" id="downloadBtn" disabled>Download</button>
-        <p class="status" id="status"></p>
-      </section>
-    </main>
+          <article class="panel preview-panel" id="infoPanel" hidden>
+            <div class="preview-thumb">
+              <img id="thumbnail" alt="Video thumbnail" />
+              <span class="duration-chip" id="duration">00:00</span>
+            </div>
+            <div class="preview-meta">
+              <p class="eyebrow" id="uploader">Uploader pending…</p>
+              <h2 id="title">Metadata preview will appear here.</h2>
+              <dl>
+                <div>
+                  <dt>Total Formats</dt>
+                  <dd id="formatCount">0</dd>
+                </div>
+                <div>
+                  <dt>Selection</dt>
+                  <dd id="selectedType">Video</dd>
+                </div>
+              </dl>
+            </div>
+          </article>
+        </section>
+      </main>
+    </div>
 
     <script src="{{ url_for('static', filename='script.js') }}" defer></script>
   </body>
