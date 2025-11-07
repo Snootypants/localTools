@@ -223,6 +223,3 @@ els.resolutionSelect.addEventListener('change', (event) => {
 els.downloadType.addEventListener('change', () => {
   syncQualityControls();
 });
-els.downloadType.addEventListener('change', () => {
-  els.selectedType.textContent = els.downloadType.value === 'audio' ? 'Audio' : 'Video';
-});
