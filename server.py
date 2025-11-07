@@ -1,6 +1,7 @@
 import re
 from pathlib import Path
 from typing import Any, Dict, List, Optional
+from urllib.parse import parse_qs, urlencode, urlparse, urlunparse
 
 from flask import Flask, jsonify, render_template, request, send_file
 from yt_dlp import YoutubeDL
@@ -30,6 +31,16 @@ def _validate_url(url: Optional[str]) -> str:
     if "youtube" not in url and "youtu.be" not in url:
         raise DownloaderError("Only YouTube URLs are supported in this version.")
     return url
+
+
+def _ensure_english_locale(url: str) -> str:
+    """Append query params that force YouTube to respond in English."""
+    parsed = urlparse(url)
+    query = parse_qs(parsed.query, keep_blank_values=True)
+    query["hl"] = ["en"]
+    query["persist_hl"] = ["1"]
+    new_query = urlencode(query, doseq=True)
+    return urlunparse(parsed._replace(query=new_query))
 
 
 def _sanitize_filename(name: str) -> str:
@@ -125,7 +136,7 @@ def index() -> str:
 def get_info():
     payload = request.get_json(silent=True) or {}
     try:
-        url = _validate_url(payload.get("url"))
+        url = _ensure_english_locale(_validate_url(payload.get("url")))
         ydl_opts = {**_base_ydl_opts(), "skip_download": True}
         with YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(url, download=False)
@@ -141,7 +152,7 @@ def get_info():
 def download_video():
     payload = request.get_json(silent=True) or {}
     try:
-        url = _validate_url(payload.get("url"))
+        url = _ensure_english_locale(_validate_url(payload.get("url")))
         format_id = payload.get("format_id")
         download_type = (payload.get("download_type") or "video").lower()
         ydl_opts = _base_ydl_opts()
