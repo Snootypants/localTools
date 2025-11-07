@@ -4,6 +4,7 @@ const els = {
   fetchBtn: document.getElementById('fetchBtn'),
   downloadBtn: document.getElementById('downloadBtn'),
   formatSelect: document.getElementById('formatSelect'),
+  resolutionSelect: document.getElementById('resolutionSelect'),
   downloadType: document.getElementById('downloadType'),
   status: document.getElementById('status'),
   infoPanel: document.getElementById('infoPanel'),
@@ -13,6 +14,11 @@ const els = {
   thumbnail: document.getElementById('thumbnail'),
   formatCount: document.getElementById('formatCount'),
   selectedType: document.getElementById('selectedType')
+};
+
+const state = {
+  formats: [],
+  groupedFormats: new Map()
 };
 
 // Convert seconds to hh:mm:ss (dropping leading hours when unnecessary).
@@ -39,9 +45,22 @@ const setStatus = (message, type = 'info') => {
 };
 
 // Fill the dropdown with server supplied formats; disable it when empty.
-const populateFormats = (formats) => {
+const groupFormatsByResolution = (formats) => {
+  const grouped = new Map();
+  formats.forEach((fmt) => {
+    const key = Number.isFinite(fmt.height) ? Number(fmt.height) : 'audio';
+    if (!grouped.has(key)) grouped.set(key, []);
+    grouped.get(key).push(fmt);
+  });
+  return grouped;
+};
+
+const populateFormatOptions = (resolutionValue) => {
+  const key = resolutionValue === 'audio' ? 'audio' : Number(resolutionValue);
+  const targetFormats = state.groupedFormats.get(key) || [];
   els.formatSelect.innerHTML = '';
-  if (!formats.length) {
+
+  if (!targetFormats.length) {
     const opt = document.createElement('option');
     opt.textContent = 'No compatible formats available';
     els.formatSelect.appendChild(opt);
@@ -50,17 +69,61 @@ const populateFormats = (formats) => {
     return;
   }
 
-  formats.forEach((fmt) => {
-    const option = document.createElement('option');
-    const labelParts = [fmt.height ? `${fmt.height}p` : null, fmt.ext, fmt.format_note]
+  targetFormats.forEach((fmt) => {
+    const detailParts = [fmt.ext, fmt.format_note, fmt.fps ? `${fmt.fps}fps` : null]
       .filter(Boolean)
-      .join(' · ');
+      .join(' • ');
+    const option = document.createElement('option');
     option.value = fmt.format_id;
-    option.textContent = labelParts || fmt.format_id;
+    option.textContent = detailParts || fmt.format_id;
     els.formatSelect.appendChild(option);
   });
   els.formatSelect.disabled = false;
-  els.formatCount.textContent = formats.length;
+  els.formatSelect.value = targetFormats[0].format_id;
+  els.formatCount.textContent = targetFormats.length;
+};
+
+const populateResolutionOptions = () => {
+  els.resolutionSelect.innerHTML = '';
+  const numericResolutions = [...state.groupedFormats.keys()]
+    .filter((key) => key !== 'audio')
+    .sort((a, b) => Number(b) - Number(a));
+
+  numericResolutions.forEach((height) => {
+    const option = document.createElement('option');
+    option.value = String(height);
+    option.textContent = `${height}p`;
+    els.resolutionSelect.appendChild(option);
+  });
+
+  if (state.groupedFormats.has('audio')) {
+    const audioOption = document.createElement('option');
+    audioOption.value = 'audio';
+    audioOption.textContent = 'Audio only';
+    els.resolutionSelect.appendChild(audioOption);
+  }
+
+  if (!numericResolutions.length && !state.groupedFormats.has('audio')) {
+    els.resolutionSelect.disabled = true;
+    els.formatSelect.disabled = true;
+    els.formatCount.textContent = '0';
+    return;
+  }
+
+  const defaultValue = numericResolutions[0] ?? 'audio';
+  els.resolutionSelect.value = String(defaultValue);
+  els.resolutionSelect.disabled = false;
+  populateFormatOptions(String(defaultValue));
+};
+
+const syncQualityControls = () => {
+  const isAudio = els.downloadType.value === 'audio';
+  els.selectedType.textContent = isAudio ? 'Audio' : 'Video';
+  els.resolutionSelect.disabled = isAudio || !els.resolutionSelect.options.length;
+  els.formatSelect.disabled = isAudio || !els.formatSelect.options.length;
+  if (!isAudio && !els.resolutionSelect.disabled) {
+    populateFormatOptions(els.resolutionSelect.value);
+  }
 };
 
 const fetchInfo = async () => {
@@ -88,7 +151,10 @@ const fetchInfo = async () => {
     }
     els.infoPanel.hidden = false;
 
-    populateFormats(data.formats || []);
+    state.formats = data.formats || [];
+    state.groupedFormats = groupFormatsByResolution(state.formats);
+    populateResolutionOptions();
+    syncQualityControls();
     els.downloadBtn.disabled = false;
     setStatus('Metadata ready. Choose a format and hit download.', 'success');
   } catch (err) {
@@ -150,6 +216,12 @@ els.fetchBtn.addEventListener('click', fetchInfo);
 els.downloadBtn.addEventListener('click', downloadVideo);
 els.url.addEventListener('keyup', (event) => {
   if (event.key === 'Enter') fetchInfo();
+});
+els.resolutionSelect.addEventListener('change', (event) => {
+  populateFormatOptions(event.target.value);
+});
+els.downloadType.addEventListener('change', () => {
+  syncQualityControls();
 });
 els.downloadType.addEventListener('change', () => {
   els.selectedType.textContent = els.downloadType.value === 'audio' ? 'Audio' : 'Video';
