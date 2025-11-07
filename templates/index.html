@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<!-- LocalTools single-page YouTube downloader interface. -->
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>LocalTools • YouTube Downloader</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}" />
+  </head>
+  <body>
+    <main class="container">
+      <section class="hero">
+        <h1>YouTube Downloader</h1>
+        <p>All processing stays on your machine. Paste a link to get started.</p>
+      </section>
+
+      <section class="card">
+        <label for="videoUrl">YouTube URL</label>
+        <div class="input-row">
+          <input id="videoUrl" name="videoUrl" type="url" placeholder="https://www.youtube.com/watch?v=..." />
+          <button type="button" id="fetchBtn">Fetch Info</button>
+        </div>
+
+        <div class="info-grid" id="infoPanel" hidden>
+          <img id="thumbnail" alt="Video thumbnail" />
+          <div class="meta">
+            <h2 id="title">–</h2>
+            <p id="uploader"></p>
+            <p id="duration"></p>
+          </div>
+        </div>
+
+        <label for="formatSelect">Format</label>
+        <select id="formatSelect" disabled>
+          <option value="" selected hidden>Fetch info to list formats</option>
+        </select>
+
+        <label for="downloadType">Download Type</label>
+        <select id="downloadType">
+          <option value="video" selected>Video</option>
+          <option value="audio">Audio (MP3)</option>
+        </select>
+
+        <button type="button" id="downloadBtn" disabled>Download</button>
+        <p class="status" id="status"></p>
+      </section>
+    </main>
+
+    <script src="{{ url_for('static', filename='script.js') }}" defer></script>
+  </body>
+</html>
