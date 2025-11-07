@@ -59,6 +59,7 @@ def _format_response(info: Dict[str, Any]) -> Dict[str, Any]:
             "ext": fmt.get("ext"),
             "height": fmt.get("height"),
             "filesize": fmt.get("filesize"),
+            "filesize_approx": fmt.get("filesize_approx"),
             "format_note": fmt.get("format_note"),
             "fps": fmt.get("fps"),
         }
@@ -78,7 +79,23 @@ def _format_response(info: Dict[str, Any]) -> Dict[str, Any]:
         "thumbnail": info.get("thumbnail"),
         "description": info.get("description"),
         "formats": formats,
+        "default_download_dir": str(DOWNLOAD_DIR),
     }
+
+
+def _resolve_download_dir(custom_dir: Optional[str]) -> Path:
+    """Return a writable directory, defaulting to the project downloads folder."""
+    if not custom_dir or not str(custom_dir).strip():
+        target = DOWNLOAD_DIR
+    else:
+        candidate = Path(custom_dir).expanduser()
+        if not candidate.is_absolute():
+            candidate = (BASE_DIR / candidate).resolve()
+        else:
+            candidate = candidate.resolve()
+        candidate.mkdir(parents=True, exist_ok=True)
+        target = candidate
+    return target
 
 
 @app.route("/")
@@ -87,7 +104,11 @@ def _format_response(info: Dict[str, Any]) -> Dict[str, Any]:
 @app.route("/templates/index.html")
 def index() -> str:
     """Serve the primary UI regardless of legacy template paths."""
-    return render_template("index.html")
+    return render_template(
+        "index.html",
+        default_download_dir=str(DOWNLOAD_DIR),
+        base_dir=str(BASE_DIR),
+    )
 
 
 @app.route("/info", methods=["POST"])
@@ -114,10 +135,11 @@ def download_video():
         format_id = payload.get("format_id")
         download_type = (payload.get("download_type") or "video").lower()
         ydl_opts = _base_ydl_opts()
+        download_dir = _resolve_download_dir(payload.get("save_dir"))
 
         preferred_name = payload.get("preferred_name")
         filename_template = _sanitize_filename(preferred_name) if preferred_name else "%(title)s"
-        ydl_opts["paths"] = {"home": str(DOWNLOAD_DIR)}
+        ydl_opts["paths"] = {"home": str(download_dir)}
         ydl_opts["outtmpl"] = f"{filename_template}.%(ext)s"
         ydl_opts["outtmpl_na_placeholder"] = "unknown"
 
@@ -152,7 +174,10 @@ def download_video():
     if not file_path.exists():
         return jsonify({"error": "Downloaded file not found."}), 500
 
-    return send_file(file_path, as_attachment=True, download_name=file_path.name)
+    response = send_file(file_path, as_attachment=True, download_name=file_path.name)
+    response.headers["X-Download-Path"] = str(file_path)
+    response.headers["X-Download-Dir"] = str(file_path.parent)
+    return response
 
 
 if __name__ == "__main__":

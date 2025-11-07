@@ -30,6 +30,17 @@
               </div>
             </div>
 
+            <div class="field-group">
+              <label for="saveDirInput">Save Location</label>
+              <div class="field-row">
+                <input id="saveDirInput" name="saveDirInput" type="text" value="{{ default_download_dir }}" />
+                <button type="button" id="saveDirReset" class="ghost">Reset</button>
+              </div>
+              <p class="helper-text">
+                Files will save to <span id="saveDirDisplay">{{ default_download_dir }}</span>
+              </p>
+            </div>
+
             <div class="field-grid">
               <div>
                 <label for="resolutionSelect">Resolution</label>
@@ -97,6 +108,12 @@
       </main>
     </div>
 
+    <script>
+      window.APP_CONFIG = {
+        defaultSaveDir: "{{ default_download_dir }}",
+        baseDir: "{{ base_dir }}"
+      };
+    </script>
     <script src="{{ url_for('static', filename='script.js') }}" defer></script>
   </body>
 </html>

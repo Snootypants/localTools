@@ -1,4 +1,5 @@
 // LocalTools front-end controller for metadata fetch and download actions.
+const appConfig = window.APP_CONFIG || {};
 const els = {
   url: document.getElementById('videoUrl'),
   fetchBtn: document.getElementById('fetchBtn'),
@@ -20,12 +21,19 @@ const els = {
   progressWrapper: document.getElementById('progressWrapper'),
   progressTrack: document.getElementById('progressTrack'),
   progressBar: document.getElementById('progressBar'),
-  progressLabel: document.getElementById('progressLabel')
+  progressLabel: document.getElementById('progressLabel'),
+  saveDirInput: document.getElementById('saveDirInput'),
+  saveDirDisplay: document.getElementById('saveDirDisplay'),
+  saveDirReset: document.getElementById('saveDirReset')
 };
 
 const state = {
   formats: [],
-  groupedFormats: new Map()
+  groupedFormats: new Map(),
+  formatSizes: new Map(),
+  defaultSaveDir: appConfig.defaultSaveDir || '',
+  baseDir: appConfig.baseDir || '',
+  saveDir: appConfig.defaultSaveDir || ''
 };
 
 let downloadController = null;
@@ -111,13 +119,48 @@ const setDownloadReady = (ready) => {
   }
 };
 
+const normalizeSaveDir = (value) => (value || '').trim();
+
+const resolveSaveDirText = (value) => {
+  const trimmed = normalizeSaveDir(value);
+  if (!trimmed) return state.defaultSaveDir || '';
+  if (
+    trimmed.startsWith('/') ||
+    trimmed.startsWith('~') ||
+    /^[A-Za-z]:/.test(trimmed)
+  ) {
+    return trimmed;
+  }
+  if (state.baseDir) {
+    const base = state.baseDir.replace(/\/$/, '');
+    const relative = trimmed.replace(/^\/+/, '');
+    return `${base}/${relative}`;
+  }
+  return trimmed;
+};
+
+const updateSaveDirDisplay = (value) => {
+  state.saveDir = normalizeSaveDir(value) || state.defaultSaveDir || '';
+  if (els.saveDirDisplay) {
+    els.saveDirDisplay.textContent = resolveSaveDirText(state.saveDir);
+  }
+};
+
 // Fill the dropdown with server supplied formats; disable it when empty.
 const groupFormatsByResolution = (formats) => {
   const grouped = new Map();
+  state.formatSizes = new Map();
   formats.forEach((fmt) => {
     const key = Number.isFinite(fmt.height) ? Number(fmt.height) : 'audio';
     if (!grouped.has(key)) grouped.set(key, []);
     grouped.get(key).push(fmt);
+    if (fmt.format_id) {
+      const rawSize = fmt.filesize ?? fmt.filesize_approx ?? null;
+      state.formatSizes.set(
+        fmt.format_id,
+        rawSize ? Number(rawSize) : null
+      );
+    }
   });
   return grouped;
 };
@@ -193,6 +236,18 @@ const syncQualityControls = () => {
   }
 };
 
+const getSelectedFormatId = () => {
+  if (els.formatSelect.disabled || !els.formatSelect.value) return null;
+  return els.formatSelect.value;
+};
+
+const getExpectedSize = () => {
+  const formatId = getSelectedFormatId();
+  if (!formatId) return null;
+  const size = state.formatSizes.get(formatId);
+  return Number.isFinite(Number(size)) ? Number(size) : null;
+};
+
 const fetchInfo = async () => {
   setStatus('Fetching metadata… hang tight.');
   els.fetchBtn.disabled = true;
@@ -231,7 +286,10 @@ const fetchInfo = async () => {
     syncQualityControls();
     setDownloadReady(true);
     setDownloadState('idle');
-    setStatus('Metadata ready. Choose a format and hit download.', 'success');
+    setStatus(
+      `Metadata ready. Files will save to ${resolveSaveDirText(state.saveDir)}.`,
+      'success'
+    );
   } catch (err) {
     setDownloadReady(false);
     setDownloadState('idle');
@@ -255,11 +313,15 @@ const downloadVideo = async () => {
   setProgressValue(0);
   setStatus('Downloading… this may take a moment.');
 
+  const expectedSize = getExpectedSize();
+
   try {
     const payload = {
       url: els.url.value,
-      format_id: els.formatSelect.disabled ? null : els.formatSelect.value,
-      download_type: els.downloadType.value
+      format_id: getSelectedFormatId(),
+      download_type: els.downloadType.value,
+      save_dir: state.saveDir,
+      expected_size: expectedSize
     };
 
     const res = await fetch('/download', {
@@ -274,9 +336,15 @@ const downloadVideo = async () => {
       throw new Error(data.error || 'Download failed');
     }
 
-    const contentLength = Number(res.headers.get('Content-Length')) || null;
+    let contentLength = Number(res.headers.get('Content-Length'));
+    if (!Number.isFinite(contentLength) || contentLength <= 0) {
+      contentLength = expectedSize || null;
+    }
+
     if (contentLength) {
       setProgressIndeterminate(false);
+    } else {
+      setProgressIndeterminate(true);
     }
 
     let blob;
@@ -316,7 +384,16 @@ const downloadVideo = async () => {
     anchor.remove();
     URL.revokeObjectURL(objectUrl);
 
-    setStatus('Download complete.', 'success');
+    const resolvedPath = res.headers.get('X-Download-Path');
+    const resolvedDir = res.headers.get('X-Download-Dir');
+    if (resolvedDir && els.saveDirDisplay) {
+      els.saveDirDisplay.textContent = resolvedDir;
+    }
+
+    setStatus(
+      `Download complete. Saved to ${resolvedPath || resolvedDir || resolveSaveDirText(state.saveDir)}.`,
+      'success'
+    );
     setDownloadState('finished');
     setTimeout(() => {
       hideProgress();
@@ -354,3 +431,19 @@ els.resolutionSelect.addEventListener('change', (event) => {
 els.downloadType.addEventListener('change', () => {
   syncQualityControls();
 });
+
+if (els.saveDirInput) {
+  els.saveDirInput.addEventListener('input', (event) => {
+    updateSaveDirDisplay(event.target.value);
+  });
+  updateSaveDirDisplay(els.saveDirInput.value);
+}
+
+if (els.saveDirReset) {
+  els.saveDirReset.addEventListener('click', () => {
+    if (els.saveDirInput) {
+      els.saveDirInput.value = state.defaultSaveDir || '';
+      updateSaveDirDisplay(els.saveDirInput.value);
+    }
+  });
+}
