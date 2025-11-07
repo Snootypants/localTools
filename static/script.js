@@ -16,6 +16,7 @@ const els = {
   thumbnail: document.getElementById('thumbnail'),
   formatCount: document.getElementById('formatCount'),
   selectedType: document.getElementById('selectedType'),
+  description: document.getElementById('description'),
   progressWrapper: document.getElementById('progressWrapper'),
   progressTrack: document.getElementById('progressTrack'),
   progressBar: document.getElementById('progressBar'),
@@ -213,6 +214,11 @@ const fetchInfo = async () => {
     els.uploader.textContent = data.uploader ? data.uploader : 'Unknown uploader';
     const formattedDuration = data.duration ? formatDuration(data.duration) : '00:00';
     els.duration.textContent = formattedDuration;
+    if (data.description) {
+      els.description.textContent = data.description;
+    } else {
+      els.description.textContent = 'No description provided.';
+    }
     if (data.thumbnail) {
       els.thumbnail.src = data.thumbnail;
       els.thumbnail.removeAttribute('hidden');

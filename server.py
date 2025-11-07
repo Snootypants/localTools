@@ -76,6 +76,7 @@ def _format_response(info: Dict[str, Any]) -> Dict[str, Any]:
         "uploader": info.get("uploader"),
         "duration": info.get("duration"),
         "thumbnail": info.get("thumbnail"),
+        "description": info.get("description"),
         "formats": formats,
     }
 
@@ -114,8 +115,11 @@ def download_video():
         download_type = (payload.get("download_type") or "video").lower()
         ydl_opts = _base_ydl_opts()
 
-        filename_template = _sanitize_filename(payload.get("preferred_name") or "%(title)s-%(id)s")
-        ydl_opts["outtmpl"] = str(DOWNLOAD_DIR / f"{filename_template}.%(ext)s")
+        preferred_name = payload.get("preferred_name")
+        filename_template = _sanitize_filename(preferred_name) if preferred_name else "%(title)s"
+        ydl_opts["paths"] = {"home": str(DOWNLOAD_DIR)}
+        ydl_opts["outtmpl"] = f"{filename_template}.%(ext)s"
+        ydl_opts["outtmpl_na_placeholder"] = "unknown"
 
         if download_type == "audio":
             # Force best available audio and convert it to MP3 via ffmpeg.
@@ -136,8 +140,11 @@ def download_video():
 
         with YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(url, download=True)
-            file_path = Path(ydl.prepare_filename(info))
-    except DownloaderError as exc:
+            output_path = info.get("_filename")
+            if not output_path and info.get("requested_downloads"):
+                output_path = info["requested_downloads"][-1].get("filepath")
+            file_path = Path(output_path or ydl.prepare_filename(info))
+except DownloaderError as exc:
         return jsonify({"error": str(exc)}), 400
     except Exception as exc:  # pragma: no cover - network/lib errors
         return jsonify({"error": f"Download failed: {exc}"}), 500

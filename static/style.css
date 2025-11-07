@@ -265,6 +265,28 @@ button:not(:disabled):hover {
   color: var(--muted);
 }
 
+.description-block {
+  margin-top: 1.25rem;
+  padding-top: 1rem;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.description-label {
+  margin: 0 0 0.35rem;
+  font-size: 0.8rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.description-text {
+  margin: 0;
+  color: rgba(255, 255, 255, 0.85);
+  max-height: 7rem;
+  overflow: auto;
+  line-height: 1.4;
+}
+
 .preview-panel {
   display: grid;
   gap: 1.5rem;
