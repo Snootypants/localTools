@@ -144,7 +144,7 @@ def download_video():
             if not output_path and info.get("requested_downloads"):
                 output_path = info["requested_downloads"][-1].get("filepath")
             file_path = Path(output_path or ydl.prepare_filename(info))
-except DownloaderError as exc:
+    except DownloaderError as exc:
         return jsonify({"error": str(exc)}), 400
     except Exception as exc:  # pragma: no cover - network/lib errors
         return jsonify({"error": f"Download failed: {exc}"}), 500
