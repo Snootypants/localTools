@@ -3,6 +3,8 @@ const els = {
   url: document.getElementById('videoUrl'),
   fetchBtn: document.getElementById('fetchBtn'),
   downloadBtn: document.getElementById('downloadBtn'),
+  downloadBtnIcon: document.querySelector('#downloadBtn .icon'),
+  downloadBtnLabel: document.querySelector('#downloadBtn .label'),
   formatSelect: document.getElementById('formatSelect'),
   resolutionSelect: document.getElementById('resolutionSelect'),
   downloadType: document.getElementById('downloadType'),
@@ -13,13 +15,21 @@ const els = {
   duration: document.getElementById('duration'),
   thumbnail: document.getElementById('thumbnail'),
   formatCount: document.getElementById('formatCount'),
-  selectedType: document.getElementById('selectedType')
+  selectedType: document.getElementById('selectedType'),
+  progressWrapper: document.getElementById('progressWrapper'),
+  progressTrack: document.getElementById('progressTrack'),
+  progressBar: document.getElementById('progressBar'),
+  progressLabel: document.getElementById('progressLabel')
 };
 
 const state = {
   formats: [],
   groupedFormats: new Map()
 };
+
+let downloadController = null;
+let downloadReady = false;
+let downloadState = 'idle';
 
 // Convert seconds to hh:mm:ss (dropping leading hours when unnecessary).
 const formatDuration = (seconds) => {
@@ -41,6 +51,62 @@ const setStatus = (message, type = 'info') => {
     els.status.style.color = 'var(--success)';
   } else {
     els.status.style.color = 'var(--muted)';
+  }
+};
+
+const showProgress = () => {
+  els.progressWrapper.hidden = false;
+};
+
+const hideProgress = () => {
+  els.progressWrapper.hidden = true;
+  setProgressIndeterminate(false);
+  setProgressValue(0);
+};
+
+const setProgressIndeterminate = (active) => {
+  els.progressTrack.classList.toggle('indeterminate', active);
+  if (active) {
+    els.progressLabel.textContent = '…';
+  }
+};
+
+const setProgressValue = (fraction) => {
+  const safe = Math.max(0, Math.min(1, Number.isFinite(fraction) ? fraction : 0));
+  const percent = Math.round(safe * 100);
+  els.progressBar.style.width = `${percent}%`;
+  els.progressLabel.textContent = `${percent}%`;
+};
+
+const setDownloadState = (state) => {
+  downloadState = state;
+  const label = els.downloadBtnLabel;
+  const icon = els.downloadBtnIcon;
+  if (!label || !icon) return;
+
+  els.downloadBtn.classList.toggle('is-stop', state === 'running');
+  els.downloadBtn.classList.toggle('is-finished', state === 'finished');
+
+  if (state === 'running') {
+    label.textContent = 'Stop';
+    icon.textContent = '✕';
+    els.downloadBtn.disabled = false;
+  } else if (state === 'finished') {
+    label.textContent = 'Finished';
+    icon.textContent = '✓';
+    els.downloadBtn.disabled = true;
+  } else {
+    label.textContent = 'Download';
+    icon.textContent = '⬇︎';
+    els.downloadBtn.disabled = !downloadReady;
+    els.downloadBtn.classList.remove('is-finished');
+  }
+};
+
+const setDownloadReady = (ready) => {
+  downloadReady = ready;
+  if (downloadState === 'idle') {
+    els.downloadBtn.disabled = !downloadReady;
   }
 };
 
@@ -129,7 +195,9 @@ const syncQualityControls = () => {
 const fetchInfo = async () => {
   setStatus('Fetching metadata… hang tight.');
   els.fetchBtn.disabled = true;
-  els.downloadBtn.disabled = true;
+  setDownloadReady(false);
+  setDownloadState('idle');
+  hideProgress();
 
   try {
     const res = await fetch('/info', {
@@ -155,9 +223,12 @@ const fetchInfo = async () => {
     state.groupedFormats = groupFormatsByResolution(state.formats);
     populateResolutionOptions();
     syncQualityControls();
-    els.downloadBtn.disabled = false;
+    setDownloadReady(true);
+    setDownloadState('idle');
     setStatus('Metadata ready. Choose a format and hit download.', 'success');
   } catch (err) {
+    setDownloadReady(false);
+    setDownloadState('idle');
     setStatus(err.message, 'error');
   } finally {
     els.fetchBtn.disabled = false;
@@ -171,8 +242,12 @@ const parseFilename = (contentDisposition) => {
 };
 
 const downloadVideo = async () => {
+  downloadController = new AbortController();
+  setDownloadState('running');
+  showProgress();
+  setProgressIndeterminate(true);
+  setProgressValue(0);
   setStatus('Downloading… this may take a moment.');
-  els.downloadBtn.disabled = true;
 
   try {
     const payload = {
@@ -184,7 +259,8 @@ const downloadVideo = async () => {
     const res = await fetch('/download', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload)
+      body: JSON.stringify(payload),
+      signal: downloadController.signal
     });
 
     if (!res.ok) {
@@ -192,28 +268,77 @@ const downloadVideo = async () => {
       throw new Error(data.error || 'Download failed');
     }
 
-    const blob = await res.blob();
+    const contentLength = Number(res.headers.get('Content-Length')) || null;
+    if (contentLength) {
+      setProgressIndeterminate(false);
+    }
+
+    let blob;
+    if (res.body && res.body.getReader) {
+      const reader = res.body.getReader();
+      const chunks = [];
+      let received = 0;
+
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        chunks.push(value);
+        received += value.length;
+        if (contentLength) {
+          setProgressValue(received / contentLength);
+        }
+      }
+
+      blob = new Blob(chunks, {
+        type: res.headers.get('Content-Type') || 'application/octet-stream'
+      });
+    } else {
+      blob = await res.blob();
+    }
+
+    setProgressIndeterminate(false);
+    setProgressValue(1);
+
     const filename = parseFilename(res.headers.get('Content-Disposition')) || 'download';
-    const url = URL.createObjectURL(blob);
+    const objectUrl = URL.createObjectURL(blob);
 
     const anchor = document.createElement('a');
-    anchor.href = url;
+    anchor.href = objectUrl;
     anchor.download = filename;
     document.body.appendChild(anchor);
     anchor.click();
     anchor.remove();
-    URL.revokeObjectURL(url);
+    URL.revokeObjectURL(objectUrl);
 
     setStatus('Download complete.', 'success');
+    setDownloadState('finished');
+    setTimeout(() => {
+      hideProgress();
+      if (downloadState === 'finished') {
+        setDownloadState('idle');
+      }
+    }, 1800);
   } catch (err) {
-    setStatus(err.message, 'error');
+    if (err.name === 'AbortError') {
+      setStatus('Download cancelled.', 'info');
+    } else {
+      setStatus(err.message, 'error');
+    }
+    hideProgress();
+    setDownloadState('idle');
   } finally {
-    els.downloadBtn.disabled = false;
+    downloadController = null;
   }
 };
 
 els.fetchBtn.addEventListener('click', fetchInfo);
-els.downloadBtn.addEventListener('click', downloadVideo);
+els.downloadBtn.addEventListener('click', () => {
+  if (downloadState === 'running') {
+    downloadController?.abort();
+  } else if (downloadReady) {
+    downloadVideo();
+  }
+});
 els.url.addEventListener('keyup', (event) => {
   if (event.key === 'Enter') fetchInfo();
 });

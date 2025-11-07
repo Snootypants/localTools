@@ -55,8 +55,14 @@
             <div class="actions">
               <button type="button" id="downloadBtn" class="secondary" disabled>
                 <span class="icon" aria-hidden="true">⬇︎</span>
-                Download
+                <span class="label">Download</span>
               </button>
+              <div class="progress-wrapper" id="progressWrapper" hidden>
+                <div class="progress-track" id="progressTrack">
+                  <div class="progress-bar" id="progressBar"></div>
+                </div>
+                <span class="progress-label" id="progressLabel">0%</span>
+              </div>
               <p class="status" id="status">Paste a link to get started.</p>
             </div>
           </article>
